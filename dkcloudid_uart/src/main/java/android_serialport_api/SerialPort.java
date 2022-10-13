@@ -20,6 +20,7 @@ import android.util.Log;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,60 +28,87 @@ import java.io.OutputStream;
 
 public class SerialPort {
 
-	private static final String TAG = "SerialPort";
+    public SerialPort(String filePath, int baudRate, int flag) throws SecurityException, IOException {
+        this(new File(filePath), baudRate, flag);
+    }
 
-	/*
-	 * Do not remove or rename the field mFd: it is used by native method close();
-	 */
-	private FileDescriptor mFd;
-	private FileInputStream mFileInputStream;
-	private FileOutputStream mFileOutputStream;
+    // 修改为安全性串口工具类: 2021/1/7
+    public SerialPort(File file, int baudRate, int flag) throws SecurityException, IOException {
+        if (!file.exists()) {
+            throw new FileNotFoundException(file.getAbsolutePath() + " not found port err");
+        }
+        if (!file.canRead() || !file.canWrite()) {
+            try {
+                Process process = Runtime.getRuntime().exec("su");
+                String s = String.format("chmod 666 %s\nexit\n", file.getAbsolutePath());
+                OutputStream outputStream = process.getOutputStream();
+                outputStream.write(s.getBytes());
+                outputStream.flush();
+                outputStream.close();
+                sleep(500); //目的为了不block main thread
+                if (/*process.waitFor() != 0 ||*/ !file.canRead() || !file.canWrite()) {
+                    throw new SecurityException();
+                }
+            } catch (Exception exception) {
+                exception.printStackTrace();
+                throw new SecurityException();
+            }
+        }
 
-	public SerialPort(File device, int baudrate, int flags) throws SecurityException, IOException {
+        mFd = open(file.getAbsolutePath(), baudRate, flag);
+        if (mFd == null) {
+            Log.e("SerialPort", "native open returns null");
+            throw new IOException();
+        } else {
+            mFileInputStream = new FileInputStream(mFd);
+            mFileOutputStream = new FileOutputStream(mFd);
+        }
+    }
 
-		/* Check access permission */
-		if (!device.canRead() || !device.canWrite()) {
-			try {
-				/* Missing read/write permission, trying to chmod the file */
-				Process su;
-				su = Runtime.getRuntime().exec("/system/xbin/su");
-				String cmd = "chmod 666 " + device.getAbsolutePath() + "\n"
-						+ "exit\n";
-				su.getOutputStream().write(cmd.getBytes());
-				if ((su.waitFor() != 0) || !device.canRead()
-						|| !device.canWrite()) {
-					throw new SecurityException();
-				}
-			} catch (Exception e) {
-				e.printStackTrace();
-				throw new SecurityException();
-			}
-		}
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
 
-		mFd = open(device.getAbsolutePath(), baudrate, flags);
-		if (mFd == null) {
-			Log.e(TAG, "native open returns null");
-			throw new IOException();
-		}
-		mFileInputStream = new FileInputStream(mFd);
-		mFileOutputStream = new FileOutputStream(mFd);
-	}
+    private static native FileDescriptor open(String s, int i, int j);
 
-	// Getters and setters
-	public InputStream getInputStream() {
-		return mFileInputStream;
-	}
+    public native void close();
 
-	public OutputStream getOutputStream() {
-		return mFileOutputStream;
-	}
+    public InputStream getInputStream() {
+        return mFileInputStream;
+    }
 
-	// JNI
-	private native static FileDescriptor open(String path, int baudrate, int flags);
-	public native void close();
-	public native int read(byte[] outputData, int timeOut);
-	static {
-        Log.i(TAG, "loadLibrary..............");
-		System.loadLibrary("serial_port");
-	}
+    public OutputStream getOutputStream() {
+        return mFileOutputStream;
+    }
+
+    private static final String TAG = "SerialPort";
+    private FileDescriptor mFd;
+    private FileInputStream mFileInputStream;
+    private FileOutputStream mFileOutputStream;
+
+    static {
+        System.loadLibrary("serial_port");
+    }
+
+    /**************************************modify start********************************************/
+    public void closeStream() {
+        try {
+            if (null != mFileOutputStream) {
+                mFileOutputStream.close();
+                mFileOutputStream = null;
+            }
+            if (null != mFileInputStream) {
+                mFileInputStream.close();
+                mFileInputStream = null;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**************************************modify end********************************************/
 }
